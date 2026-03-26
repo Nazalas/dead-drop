@@ -2,7 +2,7 @@
  * dead-drop — main application
  */
 
-import { encode, decode, capacity, autoDetect, imageDataToBytes, bytesToImageData } from './steganography.js';
+import { encode, decode, capacity, autoDetect, imageDataToBytes, bytesToImageData, encodeSpatial, decodeSpatial } from './steganography.js';
 import { encrypt, decrypt } from './crypto.js';
 import { renderChannelView, renderLSBHeatmap, loadImageDataFromFile, loadImageData, CHANNEL_NAMES } from './visualizer.js';
 
@@ -175,33 +175,53 @@ document.getElementById('encode-btn')?.addEventListener('click', async () => {
 
   let msgBytes;
 
-  if (isImageMode) {
-    if (!state.encode.hiddenImageData) {
-      showStatus('encode-status', 'Upload an image to hide.', 'error');
-      return;
-    }
-    msgBytes = imageDataToBytes(state.encode.hiddenImageData);
-  } else {
-    const message = document.getElementById('encode-message').value.trim();
-    if (!message) {
-      showStatus('encode-status', 'Enter a message to hide.', 'error');
-      return;
-    }
-    const enc = new TextEncoder();
-    msgBytes = enc.encode(message);
-  }
-
-  if (passphrase) {
-    showStatus('encode-status', 'Encrypting…', 'info');
-    msgBytes = await encrypt(msgBytes, passphrase);
-  }
-
   // Work on a fresh copy of the original
   const workingData = new ImageData(
     new Uint8ClampedArray(state.encode.originalData.data),
     state.encode.originalData.width,
     state.encode.originalData.height
   );
+
+  if (isImageMode) {
+    // ── Spatial image-in-image ──────────────────────────────────────────────
+    if (!state.encode.hiddenImageData) {
+      showStatus('encode-status', 'Upload an image to hide.', 'error');
+      return;
+    }
+    const { width: hW, height: hH } = state.encode.hiddenImageData;
+    const cW = workingData.width, cH = workingData.height;
+    if (hW > cW || hH > cH) {
+      showStatus('encode-status', `Hidden image (${hW}×${hH}) is larger than the carrier (${cW}×${cH}). Use a larger carrier or smaller hidden image.`, 'error');
+      return;
+    }
+    try {
+      encodeSpatial(workingData.data, cW, cH, state.encode.hiddenImageData, bpc);
+      const preview = document.getElementById('encode-preview');
+      preview.getContext('2d').putImageData(workingData, 0, 0);
+      state.encode.encodedData = workingData;
+      document.getElementById('encode-download').style.display = 'inline-flex';
+      showStatus('encode-status',
+        `✓ Image hidden spatially (${hW}×${hH} inside ${cW}×${cH} at ${bpc} bpp). Try the Visualize tab — you can see the ghost.`,
+        'success');
+    } catch (e) {
+      showStatus('encode-status', `Encoding failed: ${e.message}`, 'error');
+    }
+    return;
+  }
+
+  // ── Text message ────────────────────────────────────────────────────────────
+  const message = document.getElementById('encode-message').value.trim();
+  if (!message) {
+    showStatus('encode-status', 'Enter a message to hide.', 'error');
+    return;
+  }
+  const enc = new TextEncoder();
+  let msgBytes = enc.encode(message);
+
+  if (passphrase) {
+    showStatus('encode-status', 'Encrypting…', 'info');
+    msgBytes = await encrypt(msgBytes, passphrase);
+  }
 
   const px = workingData.width * workingData.height;
   const cap = capacity(px, channels, bpc);
@@ -213,15 +233,9 @@ document.getElementById('encode-btn')?.addEventListener('click', async () => {
 
   try {
     encode(workingData.data, msgBytes, { channels, bitsPerChannel: bpc });
-
-    // Render to preview canvas
     const preview = document.getElementById('encode-preview');
-    const ctx = preview.getContext('2d');
-    ctx.putImageData(workingData, 0, 0);
-
-    // Store encoded data for download
+    preview.getContext('2d').putImageData(workingData, 0, 0);
     state.encode.encodedData = workingData;
-
     document.getElementById('encode-download').style.display = 'inline-flex';
     showStatus('encode-status', `✓ Message hidden (${msgBytes.length} bytes across ${channels.length} channel${channels.length > 1 ? 's' : ''} at ${bpc} bpp). Image looks identical.`, 'success');
   } catch (e) {
@@ -242,8 +256,62 @@ document.getElementById('encode-download')?.addEventListener('click', () => {
 });
 
 // ─── DECODE TAB ───────────────────────────────────────────────────────────────
+function renderDecodedImage(imageData, width, height, statusMsg) {
+  const resultEl = document.getElementById('decode-result');
+  const outputEl = document.getElementById('decode-output');
+  outputEl.style.display = 'none';
+  document.getElementById('decode-copy').style.display = 'none';
+
+  let wrap = document.getElementById('decode-image-output');
+  let canvas;
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = 'decode-image-output';
+    wrap.style.cssText = 'margin-bottom:0.75rem;';
+    const lbl = document.createElement('p');
+    lbl.id = 'decode-image-label';
+    lbl.className = 'muted';
+    lbl.style.cssText = 'font-size:0.78rem;margin-bottom:0.5rem;';
+    canvas = document.createElement('canvas');
+    canvas.style.cssText = 'max-width:100%;border-radius:6px;display:block;';
+    const btnRow = document.createElement('div');
+    btnRow.className = 'btn-row';
+    btnRow.style.marginTop = '0.75rem';
+    const dlBtn = document.createElement('button');
+    dlBtn.id = 'decode-image-dl';
+    dlBtn.className = 'btn btn-ghost';
+    dlBtn.textContent = '⬇ Save hidden image';
+    btnRow.appendChild(dlBtn);
+    wrap.appendChild(lbl);
+    wrap.appendChild(canvas);
+    wrap.appendChild(btnRow);
+    resultEl.insertBefore(wrap, outputEl);
+  } else {
+    canvas = wrap.querySelector('canvas');
+    wrap.style.display = 'block';
+  }
+
+  canvas.width = width;
+  canvas.height = height;
+  canvas.getContext('2d').putImageData(imageData, 0, 0);
+  document.getElementById('decode-image-label').textContent = `Hidden image: ${width}×${height}`;
+
+  const dlBtn = document.getElementById('decode-image-dl');
+  dlBtn.onclick = () => {
+    const a = document.createElement('a');
+    a.download = 'hidden-image.png';
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  };
+
+  resultEl.style.display = 'block';
+  showStatus('decode-status', statusMsg, 'success');
+}
+
 setupDropzone('decode-drop', 'decode-file-input', ({ imageData, width, height }) => {
   state.decode.imageData = imageData;
+  state.decode.width = width;
+  state.decode.height = height;
   hideStatus('decode-status');
   document.getElementById('decode-result').style.display = 'none';
   document.getElementById('decode-autodetect-result').style.display = 'none';
@@ -261,11 +329,20 @@ document.getElementById('decode-btn')?.addEventListener('click', async () => {
     return;
   }
 
+  const { imageData, width: imgW, height: imgH } = state.decode;
   const channels = getChannels('decode');
   const bpc = getBPC('decode');
   const passphrase = document.getElementById('decode-passphrase').value;
 
-  const raw = decode(state.decode.imageData.data, { channels, bitsPerChannel: bpc });
+  // Try spatial image-in-image first
+  const spatial = decodeSpatial(imageData.data, imgW || Math.sqrt(imageData.data.length / 4), imgH || Math.sqrt(imageData.data.length / 4));
+  if (spatial) {
+    renderDecodedImage(spatial.imageData, spatial.width, spatial.height,
+      `✓ Hidden image revealed spatially: ${spatial.width}×${spatial.height} at ${spatial.bpc} bpp.`);
+    return;
+  }
+
+  const raw = decode(imageData.data, { channels, bitsPerChannel: bpc });
 
   if (!raw) {
     showStatus('decode-status', 'No hidden message found with these settings. Try auto-detect or adjust channels/bit depth.', 'error');
@@ -282,53 +359,12 @@ document.getElementById('decode-btn')?.addEventListener('click', async () => {
     }
   }
 
-  // Try to decode as a hidden image first
+  // Try to decode as a serialized image payload
   const hiddenImg = bytesToImageData(msgBytes);
-  const resultEl = document.getElementById('decode-result');
-  const outputEl = document.getElementById('decode-output');
-  const imgOutputEl = document.getElementById('decode-image-output');
 
   if (hiddenImg) {
-    // Render hidden image
-    outputEl.style.display = 'none';
-    document.getElementById('decode-copy').style.display = 'none';
-    if (!imgOutputEl) {
-      const wrap = document.createElement('div');
-      wrap.id = 'decode-image-output';
-      wrap.style.cssText = 'margin-bottom:0.75rem;text-align:center;';
-      const canvas = document.createElement('canvas');
-      canvas.width = hiddenImg.width;
-      canvas.height = hiddenImg.height;
-      canvas.getContext('2d').putImageData(hiddenImg.imageData, 0, 0);
-      canvas.style.cssText = 'max-width:100%;border-radius:6px;';
-      const lbl = document.createElement('p');
-      lbl.className = 'muted';
-      lbl.style.cssText = 'font-size:0.78rem;margin-bottom:0.4rem;';
-      lbl.textContent = `Hidden image: ${hiddenImg.width}×${hiddenImg.height}`;
-      wrap.appendChild(lbl);
-      wrap.appendChild(canvas);
-      // Download button
-      const dlBtn = document.createElement('button');
-      dlBtn.className = 'btn btn-ghost';
-      dlBtn.style.marginTop = '0.5rem';
-      dlBtn.textContent = '⬇ Save hidden image';
-      dlBtn.addEventListener('click', () => {
-        const a = document.createElement('a');
-        a.download = 'hidden-image.png';
-        a.href = canvas.toDataURL('image/png');
-        a.click();
-      });
-      wrap.appendChild(dlBtn);
-      resultEl.insertBefore(wrap, outputEl);
-    } else {
-      // Update existing canvas
-      imgOutputEl.querySelector('canvas').width = hiddenImg.width;
-      imgOutputEl.querySelector('canvas').height = hiddenImg.height;
-      imgOutputEl.querySelector('canvas').getContext('2d').putImageData(hiddenImg.imageData, 0, 0);
-      imgOutputEl.style.display = 'block';
-    }
-    resultEl.style.display = 'block';
-    showStatus('decode-status', `✓ Hidden image revealed: ${hiddenImg.width}×${hiddenImg.height} (${raw.length} bytes).`, 'success');
+    renderDecodedImage(hiddenImg.imageData, hiddenImg.width, hiddenImg.height,
+      `✓ Hidden image revealed: ${hiddenImg.width}×${hiddenImg.height} (${raw.length} bytes).`);
   } else {
     // Text payload
     if (imgOutputEl) imgOutputEl.style.display = 'none';
@@ -489,6 +525,8 @@ document.querySelectorAll('.demo-btn').forEach(btn => {
 
       if (tab === 'decode') {
         state.decode.imageData = imageData;
+        state.decode.width = width;
+        state.decode.height = height;
 
         const preview = document.getElementById('decode-preview');
         preview.width = width;

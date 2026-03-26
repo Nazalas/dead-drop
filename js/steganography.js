@@ -36,6 +36,99 @@ export function bytesToImageData(bytes) {
 }
 
 /**
+ * SPATIAL image-in-image encode.
+ * Maps each hidden pixel directly onto the corresponding carrier pixel's LSBs.
+ * This makes the hidden image visible in the LSB visualizer.
+ *
+ * Header: written into first 4 pixels of Red channel at full byte resolution
+ *   pixel 0 R,G = magic 0xDE, 0xAD
+ *   pixel 1 R,G = hidden width high/low byte
+ *   pixel 2 R,G = hidden height high/low byte
+ *   pixel 3 R   = bitsPerChannel used
+ *
+ * Then hidden pixel[x,y] channel[c] top-bpc-bits → carrier pixel[x,y] channel[c] LSBs
+ * (hidden image must be ≤ carrier dimensions)
+ *
+ * @param {Uint8ClampedArray} carrierData - modified in place
+ * @param {number} carrierW, carrierH
+ * @param {ImageData} hiddenImageData
+ * @param {number} bpc - bits per channel (1–4); more = more visible ghost
+ */
+export function encodeSpatial(carrierData, carrierW, carrierH, hiddenImageData, bpc = 2) {
+  const { width: hW, height: hH, data: hData } = hiddenImageData;
+  if (hW > carrierW || hH > carrierH) throw new Error(`Hidden image (${hW}×${hH}) exceeds carrier (${carrierW}×${carrierH})`);
+
+  const mask = (1 << bpc) - 1;
+  const shift = 8 - bpc; // take top bpc bits of hidden channel value
+
+  // Write header into first 4 carrier pixels (Red channel only, full byte)
+  // We overwrite the full red channel byte — slight color shift in 4 pixels, worth it for simplicity
+  carrierData[0 * 4 + 0] = 0xDE;
+  carrierData[1 * 4 + 0] = 0xAD;
+  carrierData[2 * 4 + 0] = (hW >> 8) & 0xff;
+  carrierData[3 * 4 + 0] = hW & 0xff;
+  carrierData[4 * 4 + 0] = (hH >> 8) & 0xff;
+  carrierData[5 * 4 + 0] = hH & 0xff;
+  carrierData[6 * 4 + 0] = bpc;
+
+  // Encode hidden pixels spatially — skip first 7 carrier pixels (header)
+  const HEADER_PX = 7;
+  for (let y = 0; y < hH; y++) {
+    for (let x = 0; x < hW; x++) {
+      // Map hidden (x,y) → carrier pixel, offset by header
+      const hIdx = (y * hW + x) * 4;
+      const cPx  = HEADER_PX + y * carrierW + x;
+      const cIdx = cPx * 4;
+      if (cIdx + 3 >= carrierData.length) continue;
+
+      // Encode R, G, B channels (skip A — keep carrier alpha intact)
+      for (let ch = 0; ch < 3; ch++) {
+        const topBits = (hData[hIdx + ch] >> shift) & mask;
+        carrierData[cIdx + ch] = (carrierData[cIdx + ch] & ~mask) | topBits;
+      }
+    }
+  }
+}
+
+/**
+ * SPATIAL image-in-image decode.
+ * Returns {imageData, width, height, bpc} or null if no spatial header found.
+ */
+export function decodeSpatial(carrierData, carrierW, carrierH) {
+  // Check magic
+  if (carrierData[0] !== 0xDE || carrierData[4] !== 0xAD) return null;
+
+  const hW  = (carrierData[8]  << 8) | carrierData[12];
+  const hH  = (carrierData[16] << 8) | carrierData[20];
+  const bpc = carrierData[24];
+
+  if (hW <= 0 || hH <= 0 || hW > carrierW || hH > carrierH) return null;
+  if (bpc < 1 || bpc > 4) return null;
+
+  const mask  = (1 << bpc) - 1;
+  const scale = Math.round(255 / mask); // amplify back to 0–255
+  const HEADER_PX = 7;
+
+  const hData = new Uint8ClampedArray(hW * hH * 4);
+
+  for (let y = 0; y < hH; y++) {
+    for (let x = 0; x < hW; x++) {
+      const hIdx = (y * hW + x) * 4;
+      const cPx  = HEADER_PX + y * carrierW + x;
+      const cIdx = cPx * 4;
+      if (cIdx + 3 >= carrierData.length) continue;
+
+      for (let ch = 0; ch < 3; ch++) {
+        hData[hIdx + ch] = Math.min(255, (carrierData[cIdx + ch] & mask) * scale);
+      }
+      hData[hIdx + 3] = 255; // fully opaque
+    }
+  }
+
+  return { imageData: new ImageData(hData, hW, hH), width: hW, height: hH, bpc };
+}
+
+/**
  * Encode a message into image pixel data.
  * @param {Uint8ClampedArray} pixelData - RGBA pixel data (modified in place)
  * @param {Uint8Array} messageBytes - bytes to hide
