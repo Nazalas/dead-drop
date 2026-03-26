@@ -134,13 +134,21 @@ export function capacity(pixelCount, channels, bitsPerChannel) {
 /**
  * Auto-detect which channel+bitdepth combos have a valid header.
  * Returns array of {channels, bitsPerChannel} matches.
+ * Scans all non-empty subsets of [R,G,B,A] × bpc 1–4 = 60 combinations.
  */
 export function autoDetect(pixelData) {
   const results = [];
-  const channelCombos = [
-    [0], [1], [2], [3],
-    [0, 1, 2], [0, 1, 2, 3],
-  ];
+
+  // Generate all non-empty subsets of channels [0,1,2,3]
+  const channelCombos = [];
+  for (let mask = 1; mask < 16; mask++) {
+    const combo = [];
+    for (let bit = 0; bit < 4; bit++) {
+      if (mask & (1 << bit)) combo.push(bit);
+    }
+    channelCombos.push(combo);
+  }
+
   for (const channels of channelCombos) {
     for (let bpc = 1; bpc <= 4; bpc++) {
       const msg = decode(pixelData, { channels, bitsPerChannel: bpc });
