@@ -173,8 +173,6 @@ document.getElementById('encode-btn')?.addEventListener('click', async () => {
   const channels = getChannels('encode');
   const bpc = getBPC('encode');
 
-  let msgBytes;
-
   // Work on a fresh copy of the original
   const workingData = new ImageData(
     new Uint8ClampedArray(state.encode.originalData.data),
@@ -216,7 +214,7 @@ document.getElementById('encode-btn')?.addEventListener('click', async () => {
     return;
   }
   const enc = new TextEncoder();
-  let msgBytes = enc.encode(message);
+  let msgBytes = enc.encode(message); // declared here, only used in text branch
 
   if (passphrase) {
     showStatus('encode-status', 'Encrypting…', 'info');
