@@ -194,11 +194,17 @@ document.getElementById('encode-download')?.addEventListener('click', () => {
 });
 
 // ─── DECODE TAB ───────────────────────────────────────────────────────────────
-setupDropzone('decode-drop', 'decode-file-input', ({ imageData }) => {
+setupDropzone('decode-drop', 'decode-file-input', ({ imageData, width, height }) => {
   state.decode.imageData = imageData;
   hideStatus('decode-status');
   document.getElementById('decode-result').style.display = 'none';
   document.getElementById('decode-autodetect-result').style.display = 'none';
+
+  const preview = document.getElementById('decode-preview');
+  preview.width = width;
+  preview.height = height;
+  preview.getContext('2d').putImageData(imageData, 0, 0);
+  document.getElementById('decode-preview-wrap').style.display = 'block';
 });
 
 document.getElementById('decode-btn')?.addEventListener('click', async () => {
@@ -290,6 +296,13 @@ document.getElementById('decode-bpc')?.addEventListener('input', () => {
 setupDropzone('viz-drop', 'viz-file-input', ({ imageData, width, height }) => {
   state.viz.imageData = imageData;
   state.viz.originalData = null; // reset diff ref
+
+  const preview = document.getElementById('viz-preview');
+  preview.width = width;
+  preview.height = height;
+  preview.getContext('2d').putImageData(imageData, 0, 0);
+  document.getElementById('viz-preview-wrap').style.display = 'block';
+
   document.getElementById('viz-controls').style.display = 'block';
   renderViz();
 });
@@ -347,7 +360,7 @@ document.querySelectorAll('.demo-btn').forEach(btn => {
     if (!src) return;
 
     try {
-      const { imageData, width, height, canvas } = await loadImageData(src);
+      const { imageData, width, height } = await loadImageData(src);
 
       // Switch to target tab
       document.querySelectorAll('.tab-btn').forEach(b => {
@@ -356,9 +369,25 @@ document.querySelectorAll('.demo-btn').forEach(btn => {
 
       if (tab === 'decode') {
         state.decode.imageData = imageData;
+
+        const preview = document.getElementById('decode-preview');
+        preview.width = width;
+        preview.height = height;
+        preview.getContext('2d').putImageData(imageData, 0, 0);
+        document.getElementById('decode-preview-wrap').style.display = 'block';
+        document.getElementById('decode-drop').classList.add('has-image');
+
         showStatus('decode-status', '✓ Demo image loaded — hit Decode to reveal the message.', 'success');
       } else if (tab === 'viz') {
         state.viz.imageData = imageData;
+
+        const preview = document.getElementById('viz-preview');
+        preview.width = width;
+        preview.height = height;
+        preview.getContext('2d').putImageData(imageData, 0, 0);
+        document.getElementById('viz-preview-wrap').style.display = 'block';
+        document.getElementById('viz-drop').classList.add('has-image');
+
         document.getElementById('viz-controls').style.display = 'block';
         renderViz();
       }
