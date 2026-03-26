@@ -61,10 +61,10 @@ export function encodeSpatial(carrierData, carrierW, carrierH, hiddenImageData, 
   const mask = (1 << bpc) - 1;
   const shift = 8 - bpc; // take top bpc bits of hidden channel value
 
-  // Write header into first 4 carrier pixels (Red channel only, full byte)
-  // We overwrite the full red channel byte — slight color shift in 4 pixels, worth it for simplicity
-  carrierData[0 * 4 + 0] = 0xDE;
-  carrierData[1 * 4 + 0] = 0xAD;
+  // Write header into first 7 carrier pixels, Red channel only, full byte overwrite.
+  // Uses distinct magic 0x5D (']') 0xD5 to avoid collision with LSB text stream magic 0xDE/0xAD.
+  carrierData[0 * 4 + 0] = 0x5D; // magic byte 1
+  carrierData[1 * 4 + 0] = 0xD5; // magic byte 2
   carrierData[2 * 4 + 0] = (hW >> 8) & 0xff;
   carrierData[3 * 4 + 0] = hW & 0xff;
   carrierData[4 * 4 + 0] = (hH >> 8) & 0xff;
@@ -95,8 +95,8 @@ export function encodeSpatial(carrierData, carrierW, carrierH, hiddenImageData, 
  * Returns {imageData, width, height, bpc} or null if no spatial header found.
  */
 export function decodeSpatial(carrierData, carrierW, carrierH) {
-  // Check magic
-  if (carrierData[0] !== 0xDE || carrierData[4] !== 0xAD) return null;
+  // Check magic (0x5D, 0xD5 — distinct from LSB text stream magic 0xDE/0xAD)
+  if (carrierData[0] !== 0x5D || carrierData[4] !== 0xD5) return null;
 
   const hW  = (carrierData[8]  << 8) | carrierData[12];
   const hH  = (carrierData[16] << 8) | carrierData[20];
