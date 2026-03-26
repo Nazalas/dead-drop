@@ -85,19 +85,59 @@ export function renderLSBHeatmap(srcImageData, destCanvas, channels = [0, 1, 2],
  */
 export function loadImageData(url) {
   return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      resolve({ imageData, width: canvas.width, height: canvas.height, canvas });
+    const tryLoad = (withCORS) => {
+      const img = new Image();
+      if (withCORS) img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        try {
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          resolve({ imageData, width: canvas.width, height: canvas.height, canvas });
+        } catch (e) {
+          if (withCORS) {
+            // CORS read failed — retry without crossOrigin (no getImageData, use fetch instead)
+            tryLoad(false);
+          } else {
+            reject(new Error('Canvas tainted — cannot read pixel data: ' + e.message));
+          }
+        }
+      };
+      img.onerror = (e) => {
+        if (withCORS) {
+          tryLoad(false);
+        } else {
+          reject(new Error('Failed to load image: ' + url));
+        }
+      };
+      img.src = withCORS ? url + (url.includes('?') ? '&' : '?') + '_nocache=' + Date.now() : url;
     };
-    img.onerror = reject;
-    img.src = url;
+
+    // For same-origin URLs (relative paths), skip crossOrigin entirely — it can cause issues
+    const isSameOrigin = !url.startsWith('http') || url.startsWith(location.origin);
+    if (isSameOrigin) {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        try {
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          resolve({ imageData, width: canvas.width, height: canvas.height, canvas });
+        } catch (e) {
+          reject(new Error('Canvas read failed: ' + e.message));
+        }
+      };
+      img.onerror = () => reject(new Error('Failed to load image: ' + url));
+      img.src = url;
+    } else {
+      tryLoad(true);
+    }
   });
 }
 

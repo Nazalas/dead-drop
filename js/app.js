@@ -359,13 +359,13 @@ document.querySelectorAll('.demo-btn').forEach(btn => {
     const tab = btn.dataset.tab || 'decode';
     if (!src) return;
 
+    // Switch to target tab first
+    document.querySelectorAll('.tab-btn').forEach(b => {
+      if (b.dataset.tab === tab) b.click();
+    });
+
     try {
       const { imageData, width, height } = await loadImageData(src);
-
-      // Switch to target tab
-      document.querySelectorAll('.tab-btn').forEach(b => {
-        if (b.dataset.tab === tab) b.click();
-      });
 
       if (tab === 'decode') {
         state.decode.imageData = imageData;
@@ -378,7 +378,7 @@ document.querySelectorAll('.demo-btn').forEach(btn => {
         document.getElementById('decode-drop').classList.add('has-image');
 
         showStatus('decode-status', '✓ Demo image loaded — hit Decode to reveal the message.', 'success');
-      } else if (tab === 'viz') {
+      } else if (tab === 'visualize') {
         state.viz.imageData = imageData;
 
         const preview = document.getElementById('viz-preview');
@@ -393,6 +393,8 @@ document.querySelectorAll('.demo-btn').forEach(btn => {
       }
     } catch (e) {
       console.error('Failed to load demo image:', e);
+      const statusId = tab === 'decode' ? 'decode-status' : 'decode-status';
+      showStatus(statusId, `Failed to load demo image: ${e.message}`, 'error');
     }
   });
 });
