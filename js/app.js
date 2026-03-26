@@ -1,0 +1,379 @@
+/**
+ * dead-drop — main application
+ */
+
+import { encode, decode, capacity, autoDetect } from './steganography.js';
+import { encrypt, decrypt } from './crypto.js';
+import { renderChannelView, renderLSBHeatmap, loadImageDataFromFile, loadImageData, CHANNEL_NAMES } from './visualizer.js';
+
+// ─── State ────────────────────────────────────────────────────────────────────
+const state = {
+  encode: { imageData: null, canvas: null, originalData: null },
+  decode: { imageData: null },
+  viz:    { imageData: null, originalData: null },
+};
+
+// ─── Tab switching ────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const target = btn.dataset.tab;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(`tab-${target}`).classList.add('active');
+  });
+});
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function getChannels(prefix) {
+  const checked = [];
+  ['r', 'g', 'b', 'a'].forEach((ch, i) => {
+    const el = document.getElementById(`${prefix}-ch-${ch}`);
+    if (el && el.checked) checked.push(i);
+  });
+  return checked.length ? checked : [0];
+}
+
+function getBPC(prefix) {
+  return parseInt(document.getElementById(`${prefix}-bpc`)?.value || '1', 10);
+}
+
+function showStatus(id, msg, type = 'info') {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = msg;
+  el.className = `status status-${type}`;
+  el.style.display = 'block';
+}
+
+function hideStatus(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = 'none';
+}
+
+// ─── Drag & Drop / File loaders ───────────────────────────────────────────────
+function setupDropzone(dropzoneId, inputId, onLoad) {
+  const zone = document.getElementById(dropzoneId);
+  const input = document.getElementById(inputId);
+  if (!zone || !input) return;
+
+  zone.addEventListener('click', () => input.click());
+  input.addEventListener('change', () => {
+    if (input.files[0]) handleFile(input.files[0]);
+  });
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  });
+
+  async function handleFile(file) {
+    if (!file.type.startsWith('image/')) {
+      showStatus(`${dropzoneId}-status`, 'Please upload an image file.', 'error');
+      return;
+    }
+    try {
+      const result = await loadImageDataFromFile(file);
+      zone.classList.add('has-image');
+      onLoad(result);
+    } catch (e) {
+      showStatus(`${dropzoneId}-status`, 'Failed to load image.', 'error');
+    }
+  }
+}
+
+// ─── ENCODE TAB ───────────────────────────────────────────────────────────────
+setupDropzone('encode-drop', 'encode-file-input', ({ imageData, width, height, canvas }) => {
+  state.encode.imageData = imageData;
+  state.encode.originalData = new ImageData(
+    new Uint8ClampedArray(imageData.data),
+    width, height
+  );
+  state.encode.canvas = canvas;
+
+  // Show preview
+  const preview = document.getElementById('encode-preview');
+  preview.width = width;
+  preview.height = height;
+  const ctx = preview.getContext('2d');
+  ctx.putImageData(imageData, 0, 0);
+  preview.style.display = 'block';
+  document.getElementById('encode-preview-wrap').style.display = 'block';
+
+  updateCapacity();
+  hideStatus('encode-status');
+});
+
+function updateCapacity() {
+  const el = document.getElementById('encode-capacity');
+  if (!el || !state.encode.imageData) return;
+  const px = state.encode.imageData.width * state.encode.imageData.height;
+  const channels = getChannels('encode');
+  const bpc = getBPC('encode');
+  const cap = capacity(px, channels, bpc);
+  el.textContent = `Capacity: ${cap.toLocaleString()} bytes (${(cap / 1024).toFixed(1)} KB)`;
+}
+
+['encode-ch-r','encode-ch-g','encode-ch-b','encode-ch-a'].forEach(id => {
+  document.getElementById(id)?.addEventListener('change', updateCapacity);
+});
+document.getElementById('encode-bpc')?.addEventListener('input', () => {
+  const bpc = getBPC('encode');
+  document.getElementById('encode-bpc-label').textContent = `${bpc} bit${bpc > 1 ? 's' : ''}`;
+  updateCapacity();
+});
+
+document.getElementById('encode-btn')?.addEventListener('click', async () => {
+  if (!state.encode.imageData) {
+    showStatus('encode-status', 'Upload an image first.', 'error');
+    return;
+  }
+  const message = document.getElementById('encode-message').value.trim();
+  if (!message) {
+    showStatus('encode-status', 'Enter a message to hide.', 'error');
+    return;
+  }
+
+  const passphrase = document.getElementById('encode-passphrase').value;
+  const channels = getChannels('encode');
+  const bpc = getBPC('encode');
+
+  const enc = new TextEncoder();
+  let msgBytes = enc.encode(message);
+
+  if (passphrase) {
+    showStatus('encode-status', 'Encrypting…', 'info');
+    msgBytes = await encrypt(msgBytes, passphrase);
+  }
+
+  // Work on a fresh copy of the original
+  const workingData = new ImageData(
+    new Uint8ClampedArray(state.encode.originalData.data),
+    state.encode.originalData.width,
+    state.encode.originalData.height
+  );
+
+  const px = workingData.width * workingData.height;
+  const cap = capacity(px, channels, bpc);
+
+  if (msgBytes.length > cap) {
+    showStatus('encode-status', `Message too large: ${msgBytes.length} bytes vs ${cap} byte capacity. Increase bit depth or use more channels.`, 'error');
+    return;
+  }
+
+  try {
+    encode(workingData.data, msgBytes, { channels, bitsPerChannel: bpc });
+
+    // Render to preview canvas
+    const preview = document.getElementById('encode-preview');
+    const ctx = preview.getContext('2d');
+    ctx.putImageData(workingData, 0, 0);
+
+    // Store encoded data for download
+    state.encode.encodedData = workingData;
+
+    document.getElementById('encode-download').style.display = 'inline-flex';
+    showStatus('encode-status', `✓ Message hidden (${msgBytes.length} bytes across ${channels.length} channel${channels.length > 1 ? 's' : ''} at ${bpc} bpp). Image looks identical.`, 'success');
+  } catch (e) {
+    showStatus('encode-status', `Encoding failed: ${e.message}`, 'error');
+  }
+});
+
+document.getElementById('encode-download')?.addEventListener('click', () => {
+  if (!state.encode.encodedData) return;
+  const canvas = document.createElement('canvas');
+  canvas.width = state.encode.encodedData.width;
+  canvas.height = state.encode.encodedData.height;
+  canvas.getContext('2d').putImageData(state.encode.encodedData, 0, 0);
+  const a = document.createElement('a');
+  a.download = 'dead-drop.png';
+  a.href = canvas.toDataURL('image/png');
+  a.click();
+});
+
+// ─── DECODE TAB ───────────────────────────────────────────────────────────────
+setupDropzone('decode-drop', 'decode-file-input', ({ imageData }) => {
+  state.decode.imageData = imageData;
+  hideStatus('decode-status');
+  document.getElementById('decode-result').style.display = 'none';
+  document.getElementById('decode-autodetect-result').style.display = 'none';
+});
+
+document.getElementById('decode-btn')?.addEventListener('click', async () => {
+  if (!state.decode.imageData) {
+    showStatus('decode-status', 'Upload an image first.', 'error');
+    return;
+  }
+
+  const channels = getChannels('decode');
+  const bpc = getBPC('decode');
+  const passphrase = document.getElementById('decode-passphrase').value;
+
+  const raw = decode(state.decode.imageData.data, { channels, bitsPerChannel: bpc });
+
+  if (!raw) {
+    showStatus('decode-status', 'No hidden message found with these settings. Try auto-detect or adjust channels/bit depth.', 'error');
+    return;
+  }
+
+  let msgBytes = raw;
+  if (passphrase) {
+    try {
+      msgBytes = await decrypt(raw, passphrase);
+    } catch {
+      showStatus('decode-status', 'Wrong passphrase or message was not encrypted.', 'error');
+      return;
+    }
+  }
+
+  const dec = new TextDecoder();
+  let text;
+  try {
+    text = dec.decode(msgBytes);
+  } catch {
+    text = `[binary data: ${msgBytes.length} bytes]`;
+  }
+
+  document.getElementById('decode-output').textContent = text;
+  document.getElementById('decode-result').style.display = 'block';
+  showStatus('decode-status', `✓ Decoded ${raw.length} bytes.`, 'success');
+});
+
+document.getElementById('decode-autodetect-btn')?.addEventListener('click', async () => {
+  if (!state.decode.imageData) {
+    showStatus('decode-status', 'Upload an image first.', 'error');
+    return;
+  }
+
+  showStatus('decode-status', 'Scanning all channel combinations…', 'info');
+  const results = autoDetect(state.decode.imageData.data);
+
+  const container = document.getElementById('decode-autodetect-result');
+  container.innerHTML = '';
+
+  if (!results.length) {
+    container.innerHTML = '<p class="muted">No hidden data found in any channel combination.</p>';
+  } else {
+    results.forEach(r => {
+      const chNames = r.channels.map(i => CHANNEL_NAMES[i]).join('+');
+      const div = document.createElement('div');
+      div.className = 'detect-hit';
+      div.innerHTML = `<strong>${chNames}</strong> @ ${r.bitsPerChannel} bpp — ${r.byteLength} bytes hidden`;
+      div.addEventListener('click', () => {
+        ['decode-ch-r','decode-ch-g','decode-ch-b','decode-ch-a'].forEach((id, i) => {
+          const el = document.getElementById(id);
+          if (el) el.checked = r.channels.includes(i);
+        });
+        const bpcEl = document.getElementById('decode-bpc');
+        if (bpcEl) {
+          bpcEl.value = r.bitsPerChannel;
+          document.getElementById('decode-bpc-label').textContent = `${r.bitsPerChannel} bit${r.bitsPerChannel > 1 ? 's' : ''}`;
+        }
+        container.style.display = 'none';
+        document.getElementById('decode-btn').click();
+      });
+      container.appendChild(div);
+    });
+  }
+  container.style.display = 'block';
+  hideStatus('decode-status');
+});
+
+document.getElementById('decode-bpc')?.addEventListener('input', () => {
+  const bpc = getBPC('decode');
+  document.getElementById('decode-bpc-label').textContent = `${bpc} bit${bpc > 1 ? 's' : ''}`;
+});
+
+// ─── VISUALIZER TAB ───────────────────────────────────────────────────────────
+setupDropzone('viz-drop', 'viz-file-input', ({ imageData, width, height }) => {
+  state.viz.imageData = imageData;
+  state.viz.originalData = null; // reset diff ref
+  document.getElementById('viz-controls').style.display = 'block';
+  renderViz();
+});
+
+function renderViz() {
+  if (!state.viz.imageData) return;
+
+  const mode = document.getElementById('viz-mode')?.value || 'lsb';
+  const bpc = parseInt(document.getElementById('viz-bpc')?.value || '1', 10);
+  const grid = document.getElementById('viz-grid');
+  grid.innerHTML = '';
+
+  const channels = mode === 'heatmap' ? [0, 1, 2] : [0, 1, 2, 3];
+
+  if (mode === 'heatmap') {
+    const wrap = document.createElement('div');
+    wrap.className = 'viz-cell';
+    const label = document.createElement('div');
+    label.className = 'viz-label';
+    label.textContent = 'LSB Heatmap (all channels)';
+    const canvas = document.createElement('canvas');
+    renderLSBHeatmap(state.viz.imageData, canvas, [0, 1, 2], bpc);
+    wrap.appendChild(label);
+    wrap.appendChild(canvas);
+    grid.appendChild(wrap);
+    return;
+  }
+
+  channels.forEach(ch => {
+    const wrap = document.createElement('div');
+    wrap.className = 'viz-cell';
+    const label = document.createElement('div');
+    label.className = 'viz-label';
+    label.textContent = CHANNEL_NAMES[ch];
+    const canvas = document.createElement('canvas');
+    renderChannelView(state.viz.imageData, canvas, ch, mode, bpc, state.viz.originalData);
+    wrap.appendChild(label);
+    wrap.appendChild(canvas);
+    grid.appendChild(wrap);
+  });
+}
+
+document.getElementById('viz-mode')?.addEventListener('change', renderViz);
+document.getElementById('viz-bpc')?.addEventListener('input', () => {
+  const bpc = parseInt(document.getElementById('viz-bpc').value, 10);
+  document.getElementById('viz-bpc-label').textContent = `${bpc} bit${bpc > 1 ? 's' : ''}`;
+  renderViz();
+});
+
+// ─── Demo samples ─────────────────────────────────────────────────────────────
+document.querySelectorAll('.demo-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const src = btn.dataset.src;
+    const tab = btn.dataset.tab || 'decode';
+    if (!src) return;
+
+    try {
+      const { imageData, width, height, canvas } = await loadImageData(src);
+
+      // Switch to target tab
+      document.querySelectorAll('.tab-btn').forEach(b => {
+        if (b.dataset.tab === tab) b.click();
+      });
+
+      if (tab === 'decode') {
+        state.decode.imageData = imageData;
+        showStatus('decode-status', '✓ Demo image loaded — hit Decode to reveal the message.', 'success');
+      } else if (tab === 'viz') {
+        state.viz.imageData = imageData;
+        document.getElementById('viz-controls').style.display = 'block';
+        renderViz();
+      }
+    } catch (e) {
+      console.error('Failed to load demo image:', e);
+    }
+  });
+});
+
+// ─── Copy to clipboard ────────────────────────────────────────────────────────
+document.getElementById('decode-copy')?.addEventListener('click', () => {
+  const text = document.getElementById('decode-output').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('decode-copy');
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy', 2000);
+  });
+});

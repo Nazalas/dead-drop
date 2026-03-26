@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>dead-drop — steganography tool</title>
+  <meta name="description" content="Hide secret messages inside ordinary images using LSB steganography. Encode, decode, and visualize hidden data across RGBA channels.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <a class="logo" href="#">dead<span>-drop</span></a>
+  <p class="tagline">Hide messages inside images. LSB steganography in your browser.</p>
+</header>
+
+<main class="container">
+
+  <!-- Tabs -->
+  <nav class="tabs" role="tablist">
+    <button class="tab-btn active" data-tab="encode" role="tab">🔒 Encode</button>
+    <button class="tab-btn" data-tab="decode" role="tab">🔓 Decode</button>
+    <button class="tab-btn" data-tab="visualize" role="tab">👁 Visualize</button>
+  </nav>
+
+  <!-- ══════════════════════════════ ENCODE ══════════════════════════════════ -->
+  <div id="tab-encode" class="tab-pane active">
+
+    <div class="card">
+      <p class="section-title">1. Upload a carrier image</p>
+      <div class="dropzone" id="encode-drop" role="button" tabindex="0" aria-label="Upload image to encode">
+        <div class="dropzone-icon">🖼</div>
+        <div class="dropzone-text">Drop an image here or click to browse</div>
+        <div class="dropzone-sub">PNG recommended (JPEG lossy compression destroys hidden data)</div>
+        <input type="file" id="encode-file-input" accept="image/*">
+      </div>
+      <div class="preview-wrap" id="encode-preview-wrap">
+        <canvas id="encode-preview"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="section-title">2. Your secret message</p>
+      <div class="field">
+        <textarea id="encode-message" placeholder="Type the message you want to hide…"></textarea>
+      </div>
+      <div class="field">
+        <label for="encode-passphrase">Passphrase (optional — encrypts with AES-256 before hiding)</label>
+        <input type="password" id="encode-passphrase" placeholder="Leave blank for no encryption">
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="section-title">3. Encoding settings</p>
+
+      <div class="field">
+        <label>Channels to use</label>
+        <div class="checkbox-group">
+          <label class="checkbox-label"><input type="checkbox" id="encode-ch-r" checked> Red</label>
+          <label class="checkbox-label"><input type="checkbox" id="encode-ch-g"> Green</label>
+          <label class="checkbox-label"><input type="checkbox" id="encode-ch-b"> Blue</label>
+          <label class="checkbox-label"><input type="checkbox" id="encode-ch-a"> Alpha</label>
+        </div>
+        <p class="muted" style="margin-top:0.5rem;font-size:0.78rem;">
+          More channels = more capacity. Alpha is the most covert — barely anyone checks it.
+        </p>
+      </div>
+
+      <div class="field">
+        <label>Bits per channel — <span id="encode-bpc-label">1 bit</span></label>
+        <div class="range-row">
+          <span style="font-size:0.78rem;color:var(--text-muted)">1 (invisible)</span>
+          <input type="range" id="encode-bpc" min="1" max="4" value="1">
+          <span style="font-size:0.78rem;color:var(--text-muted)">4 (subtle)</span>
+        </div>
+        <p class="muted" style="font-size:0.78rem;margin-top:0.3rem;">
+          1 bit = completely undetectable to the human eye. 4 bits = visible in visualizer but subtle in normal view.
+        </p>
+      </div>
+
+      <div id="encode-capacity" class="capacity">Select an image to see capacity.</div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" id="encode-btn">🔒 Hide Message</button>
+        <button class="btn btn-secondary" id="encode-download" style="display:none">⬇ Download Image</button>
+      </div>
+
+      <div id="encode-status" class="status"></div>
+    </div>
+
+    <div class="demo-section">
+      <p class="section-title">Try with a demo image</p>
+      <p class="muted" style="margin-bottom:0.75rem;font-size:0.83rem;">
+        These images already have a hidden message baked in. Try the Decode or Visualize tabs to reveal it.
+      </p>
+      <div class="demo-grid">
+        <button class="btn btn-ghost demo-btn" data-src="samples/demo-1.png" data-tab="decode">
+          🌆 Demo: Cityscape
+        </button>
+        <button class="btn btn-ghost demo-btn" data-src="samples/demo-2.png" data-tab="decode">
+          🌿 Demo: Forest
+        </button>
+        <button class="btn btn-ghost demo-btn" data-src="samples/demo-1.png" data-tab="visualize">
+          👁 Visualize: Cityscape
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════ DECODE ══════════════════════════════════ -->
+  <div id="tab-decode" class="tab-pane">
+
+    <div class="card">
+      <p class="section-title">Upload an encoded image</p>
+      <div class="dropzone" id="decode-drop" role="button" tabindex="0" aria-label="Upload image to decode">
+        <div class="dropzone-icon">🖼</div>
+        <div class="dropzone-text">Drop the encoded image here or click to browse</div>
+        <div class="dropzone-sub">Must be the exact PNG that was output from the encoder</div>
+        <input type="file" id="decode-file-input" accept="image/*">
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="section-title">Decoding settings</p>
+
+      <div class="field">
+        <label>Channels</label>
+        <div class="checkbox-group">
+          <label class="checkbox-label"><input type="checkbox" id="decode-ch-r" checked> Red</label>
+          <label class="checkbox-label"><input type="checkbox" id="decode-ch-g"> Green</label>
+          <label class="checkbox-label"><input type="checkbox" id="decode-ch-b"> Blue</label>
+          <label class="checkbox-label"><input type="checkbox" id="decode-ch-a"> Alpha</label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Bits per channel — <span id="decode-bpc-label">1 bit</span></label>
+        <div class="range-row">
+          <span style="font-size:0.78rem;color:var(--text-muted)">1</span>
+          <input type="range" id="decode-bpc" min="1" max="4" value="1">
+          <span style="font-size:0.78rem;color:var(--text-muted)">4</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="decode-passphrase">Passphrase (if message was encrypted)</label>
+        <input type="password" id="decode-passphrase" placeholder="Leave blank if no passphrase was used">
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" id="decode-btn">🔓 Decode</button>
+        <button class="btn btn-secondary" id="decode-autodetect-btn">🔍 Auto-detect</button>
+      </div>
+
+      <div id="decode-autodetect-result" class="autodetect-result"></div>
+      <div id="decode-status" class="status"></div>
+
+      <div class="decode-result" id="decode-result">
+        <p class="section-title" style="margin-top:1rem;">Hidden message</p>
+        <pre class="decode-output" id="decode-output"></pre>
+        <button class="btn btn-ghost" id="decode-copy">📋 Copy</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════ VISUALIZE ═══════════════════════════════ -->
+  <div id="tab-visualize" class="tab-pane">
+
+    <div class="card">
+      <p class="section-title">Upload an image to inspect</p>
+      <div class="dropzone" id="viz-drop" role="button" tabindex="0" aria-label="Upload image to visualize">
+        <div class="dropzone-icon">🔬</div>
+        <div class="dropzone-text">Drop any image here to inspect its channels</div>
+        <div class="dropzone-sub">Try an encoded image to see where the data hides</div>
+        <input type="file" id="viz-file-input" accept="image/*">
+      </div>
+    </div>
+
+    <div id="viz-controls" style="display:none">
+      <div class="card">
+        <div style="display:flex;gap:1.5rem;flex-wrap:wrap;align-items:center;">
+          <div class="field" style="margin:0">
+            <label style="margin-bottom:0.3rem">View mode</label>
+            <select id="viz-mode">
+              <option value="lsb">LSB bits (amplified)</option>
+              <option value="raw">Raw channel</option>
+              <option value="heatmap">LSB Heatmap</option>
+            </select>
+          </div>
+          <div class="field" style="margin:0;flex:1;min-width:200px">
+            <label>Bits to extract — <span id="viz-bpc-label">1 bit</span></label>
+            <div class="range-row">
+              <input type="range" id="viz-bpc" min="1" max="4" value="1">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="viz-grid" class="viz-grid"></div>
+    </div>
+
+    <div class="demo-section">
+      <p class="section-title">Visualize a demo image</p>
+      <div class="demo-grid">
+        <button class="btn btn-ghost demo-btn" data-src="samples/demo-1.png" data-tab="visualize">
+          🌆 Cityscape (has hidden message)
+        </button>
+        <button class="btn btn-ghost demo-btn" data-src="samples/demo-2.png" data-tab="visualize">
+          🌿 Forest (has hidden message)
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ═══════════════════════════ HOW IT WORKS ═══════════════════════════════ -->
+  <div class="how-it-works">
+    <h3>How it works</h3>
+    <div class="how-grid">
+      <div class="how-item">
+        <div class="how-icon">🔢</div>
+        <div class="how-text">
+          <strong>LSB Steganography</strong>
+          <p>Every pixel has R, G, B, and Alpha values (0–255). We replace the 1–4 least significant bits of each channel — changes invisible to the human eye but enough to hide kilobytes of data.</p>
+        </div>
+      </div>
+      <div class="how-item">
+        <div class="how-icon">🔐</div>
+        <div class="how-text">
+          <strong>AES-256-GCM Encryption</strong>
+          <p>Optional passphrase encrypts your message before it's hidden. Uses PBKDF2 (100k iterations) for key derivation — the hidden bytes are indistinguishable from noise even if someone knows to look.</p>
+        </div>
+      </div>
+      <div class="how-item">
+        <div class="how-icon">🌊</div>
+        <div class="how-text">
+          <strong>Alpha channel hiding</strong>
+          <p>Most tools only think about RGB. Hiding data in the Alpha channel is particularly covert — it affects transparency, which is rarely inspected. Perfect for PNG images.</p>
+        </div>
+      </div>
+      <div class="how-item">
+        <div class="how-icon">⚠️</div>
+        <div class="how-text">
+          <strong>Use PNG, not JPEG</strong>
+          <p>JPEG compression is lossy — it destroys the precise LSB values we embed. Always download and share as PNG to preserve the hidden data intact.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<footer class="site-footer">
+  <p>
+    <strong>dead-drop</strong> — steganography runs entirely in your browser. No data is ever uploaded.
+    &nbsp;·&nbsp;
+    <a href="https://github.com/Nazalas/dead-drop" target="_blank" rel="noopener">GitHub</a>
+  </p>
+</footer>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
