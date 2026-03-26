@@ -333,10 +333,15 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 }
 
 .detect-hit:hover,
-.detect-hit:focus-visible {
+.detect-hit:focus-visible,
+.detect-hit.active {
   border-color: var(--accent);
   background: var(--accent-glow);
   outline: none;
+}
+
+.detect-hit.active .detect-hit-action {
+  opacity: 1;
 }
 
 .detect-hit-action {

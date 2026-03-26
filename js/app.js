@@ -282,6 +282,10 @@ document.getElementById('decode-autodetect-btn')?.addEventListener('click', asyn
       `;
       div.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') div.click(); });
       div.addEventListener('click', () => {
+        // Highlight active result, keep list visible
+        container.querySelectorAll('.detect-hit').forEach(el => el.classList.remove('active'));
+        div.classList.add('active');
+
         ['decode-ch-r','decode-ch-g','decode-ch-b','decode-ch-a'].forEach((id, i) => {
           const el = document.getElementById(id);
           if (el) el.checked = r.channels.includes(i);
@@ -291,7 +295,6 @@ document.getElementById('decode-autodetect-btn')?.addEventListener('click', asyn
           bpcEl.value = r.bitsPerChannel;
           document.getElementById('decode-bpc-label').textContent = `${r.bitsPerChannel} bit${r.bitsPerChannel > 1 ? 's' : ''}`;
         }
-        container.style.display = 'none';
         document.getElementById('decode-btn').click();
       });
       container.appendChild(div);
