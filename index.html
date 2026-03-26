@@ -90,24 +90,6 @@
       <div id="encode-status" class="status"></div>
     </div>
 
-    <div class="demo-section">
-      <p class="section-title">Try with a demo image</p>
-      <p class="muted" style="margin-bottom:0.75rem;font-size:0.83rem;">
-        These images already have a hidden message baked in. Try the Decode or Visualize tabs to reveal it.
-      </p>
-      <div class="demo-grid">
-        <button class="btn btn-ghost demo-btn" data-src="samples/demo-1.png" data-tab="decode">
-          🌆 Demo: Cityscape
-        </button>
-        <button class="btn btn-ghost demo-btn" data-src="samples/demo-2.png" data-tab="decode">
-          🌿 Demo: Forest
-        </button>
-        <button class="btn btn-ghost demo-btn" data-src="samples/demo-1.png" data-tab="visualize">
-          👁 Visualize: Cityscape
-        </button>
-      </div>
-    </div>
-
   </div>
 
   <!-- ══════════════════════════════ DECODE ══════════════════════════════════ -->
@@ -168,6 +150,21 @@
       </div>
     </div>
 
+    <div class="demo-section">
+      <p class="section-title">Try a demo image</p>
+      <p class="muted" style="margin-bottom:0.75rem;font-size:0.83rem;">
+        These images have a hidden message already baked in — no encoding needed.
+      </p>
+      <div class="demo-grid">
+        <button class="btn btn-ghost demo-btn" data-src="samples/demo-1.png" data-tab="decode">
+          🏔 Mountains — hidden in Red channel
+        </button>
+        <button class="btn btn-ghost demo-btn" data-src="samples/demo-2.png" data-tab="decode">
+          🌲 Forest — hidden in Alpha channel
+        </button>
+      </div>
+    </div>
+
   </div>
 
   <!-- ══════════════════════════════ VISUALIZE ═══════════════════════════════ -->
@@ -210,13 +207,16 @@
     </div>
 
     <div class="demo-section">
-      <p class="section-title">Visualize a demo image</p>
+      <p class="section-title">Try a demo image</p>
+      <p class="muted" style="margin-bottom:0.75rem;font-size:0.83rem;">
+        Load a pre-encoded image and switch to LSB mode to see exactly where the hidden data lives.
+      </p>
       <div class="demo-grid">
         <button class="btn btn-ghost demo-btn" data-src="samples/demo-1.png" data-tab="visualize">
-          🌆 Cityscape (has hidden message)
+          🏔 Mountains — data in Red channel
         </button>
         <button class="btn btn-ghost demo-btn" data-src="samples/demo-2.png" data-tab="visualize">
-          🌿 Forest (has hidden message)
+          🌲 Forest — data in Alpha channel
         </button>
       </div>
     </div>
