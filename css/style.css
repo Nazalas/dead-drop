@@ -326,11 +326,31 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
   cursor: pointer;
   font-size: 0.875rem;
   transition: border-color 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
 }
 
-.detect-hit:hover {
+.detect-hit:hover,
+.detect-hit:focus-visible {
   border-color: var(--accent);
   background: var(--accent-glow);
+  outline: none;
+}
+
+.detect-hit-action {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+
+.detect-hit:hover .detect-hit-action,
+.detect-hit:focus-visible .detect-hit-action {
+  opacity: 1;
 }
 
 /* ─── Visualizer grid ────────────────────────────────────────── */

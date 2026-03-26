@@ -262,11 +262,25 @@ document.getElementById('decode-autodetect-btn')?.addEventListener('click', asyn
   if (!results.length) {
     container.innerHTML = '<p class="muted">No hidden data found in any channel combination.</p>';
   } else {
+    const hint = document.createElement('p');
+    hint.className = 'muted';
+    hint.style.cssText = 'font-size:0.8rem;margin-bottom:0.6rem';
+    hint.textContent = `Found ${results.length} match${results.length > 1 ? 'es' : ''}. Click a result to decode it.`;
+    container.appendChild(hint);
     results.forEach(r => {
       const chNames = r.channels.map(i => CHANNEL_NAMES[i]).join('+');
       const div = document.createElement('div');
       div.className = 'detect-hit';
-      div.innerHTML = `<strong>${chNames}</strong> @ ${r.bitsPerChannel} bpp — ${r.byteLength} bytes hidden`;
+      div.setAttribute('role', 'button');
+      div.setAttribute('tabindex', '0');
+      div.setAttribute('title', 'Click to decode with these settings');
+      div.innerHTML = `
+        <div class="detect-hit-info">
+          <strong>${chNames}</strong> @ ${r.bitsPerChannel} bpp &mdash; ${r.byteLength} bytes hidden
+        </div>
+        <div class="detect-hit-action">Decode &rarr;</div>
+      `;
+      div.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') div.click(); });
       div.addEventListener('click', () => {
         ['decode-ch-r','decode-ch-g','decode-ch-b','decode-ch-a'].forEach((id, i) => {
           const el = document.getElementById(id);
