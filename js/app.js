@@ -136,12 +136,47 @@ document.getElementById('encode-bpc')?.addEventListener('input', () => {
 });
 
 // ─── Payload type toggle ──────────────────────────────────────────────────────
+function updateImageChannelNote() {
+  const note = document.getElementById('encode-image-channel-note');
+  if (!note) return;
+  const isImage = document.getElementById('encode-type-image')?.checked;
+  if (!isImage) { note.style.display = 'none'; return; }
+
+  const channels = getChannels('encode');
+  const hasR = channels.includes(0), hasG = channels.includes(1), hasB = channels.includes(2), hasA = channels.includes(3);
+  const chNames = channels.map(i => ['Red','Green','Blue','Alpha'][i]).join(' + ');
+
+  let msg, quality;
+  if (hasR && hasG && hasB) {
+    quality = '<strong>Full color</strong>';
+    msg = `${quality} — R, G, B each store one color component. The hidden image will be recovered in full color.`;
+  } else if (channels.length === 1) {
+    const name = ['Red','Green','Blue','Alpha'][channels[0]];
+    quality = '<strong>Grayscale</strong>';
+    msg = `${quality} — only ${name} selected. Luminance is stored in one channel. The revealed image will be black & white.`;
+  } else if (channels.length === 0) {
+    msg = 'Select at least one channel.';
+  } else {
+    const missing = ['Red','Green','Blue'].filter((_,i) => !channels.includes(i));
+    quality = '<strong>Partial color</strong>';
+    msg = `${quality} — ${chNames} selected. Missing: ${missing.join(', ')}. The revealed image will have a tinted color cast.`;
+  }
+
+  note.innerHTML = msg;
+  note.style.display = 'block';
+}
+
 document.querySelectorAll('input[name="encode-type"]').forEach(radio => {
   radio.addEventListener('change', () => {
     const isImage = document.getElementById('encode-type-image').checked;
     document.getElementById('encode-text-fields').style.display = isImage ? 'none' : 'block';
     document.getElementById('encode-image-fields').style.display = isImage ? 'block' : 'none';
+    updateImageChannelNote();
   });
+});
+
+['encode-ch-r','encode-ch-g','encode-ch-b','encode-ch-a'].forEach(id => {
+  document.getElementById(id)?.addEventListener('change', updateImageChannelNote);
 });
 
 // ─── Hidden image dropzone ────────────────────────────────────────────────────
@@ -193,13 +228,18 @@ document.getElementById('encode-btn')?.addEventListener('click', async () => {
       return;
     }
     try {
-      encodeSpatial(workingData.data, cW, cH, state.encode.hiddenImageData, bpc);
+      encodeSpatial(workingData.data, cW, cH, state.encode.hiddenImageData, bpc, channels);
       const preview = document.getElementById('encode-preview');
       preview.getContext('2d').putImageData(workingData, 0, 0);
       state.encode.encodedData = workingData;
       document.getElementById('encode-download').style.display = 'inline-flex';
+      const chNames = channels.map(i => ['Red','Green','Blue','Alpha'][i]).join('+');
+      const colorNote = (channels.includes(0) && channels.includes(1) && channels.includes(2))
+        ? 'Full color preserved.'
+        : channels.length === 1 ? `Grayscale output (only ${chNames} stored).`
+        : `Partial color (${chNames} only).`;
       showStatus('encode-status',
-        `✓ Image hidden spatially (${hW}×${hH} inside ${cW}×${cH} at ${bpc} bpp). Try the Visualize tab — you can see the ghost.`,
+        `✓ Image hidden spatially (${hW}×${hH} inside ${cW}×${cH} at ${bpc} bpp, ${chNames}). ${colorNote} Try the Visualize tab — you can see the ghost.`,
         'success');
     } catch (e) {
       showStatus('encode-status', `Encoding failed: ${e.message}`, 'error');

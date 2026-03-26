@@ -40,50 +40,67 @@ export function bytesToImageData(bytes) {
  * Maps each hidden pixel directly onto the corresponding carrier pixel's LSBs.
  * This makes the hidden image visible in the LSB visualizer.
  *
- * Header: written into first 4 pixels of Red channel at full byte resolution
- *   pixel 0 R,G = magic 0xDE, 0xAD
- *   pixel 1 R,G = hidden width high/low byte
- *   pixel 2 R,G = hidden height high/low byte
- *   pixel 3 R   = bitsPerChannel used
+ * Header: 8 pixels, Red channel only, full byte overwrite
+ *   px 0: magic 0x5D
+ *   px 1: magic 0xD5
+ *   px 2-3: hidden width (big-endian)
+ *   px 4-5: hidden height (big-endian)
+ *   px 6: bitsPerChannel
+ *   px 7: channel bitmask (bit 0=R, bit 1=G, bit 2=B, bit 3=A)
  *
- * Then hidden pixel[x,y] channel[c] top-bpc-bits → carrier pixel[x,y] channel[c] LSBs
- * (hidden image must be ≤ carrier dimensions)
+ * Then hidden pixel[x,y] → carrier pixel[x,y+HEADER_PX] for each selected channel
+ * Hidden image must be ≤ carrier dimensions.
  *
  * @param {Uint8ClampedArray} carrierData - modified in place
  * @param {number} carrierW, carrierH
  * @param {ImageData} hiddenImageData
- * @param {number} bpc - bits per channel (1–4); more = more visible ghost
+ * @param {number} bpc - bits per channel (1–4)
+ * @param {number[]} channels - which carrier channels to use (0=R,1=G,2=B,3=A)
+ *   RGB → full color. 1 channel → grayscale (luminance). 2 channels → partial color.
  */
-export function encodeSpatial(carrierData, carrierW, carrierH, hiddenImageData, bpc = 2) {
+export function encodeSpatial(carrierData, carrierW, carrierH, hiddenImageData, bpc = 2, channels = [0, 1, 2]) {
   const { width: hW, height: hH, data: hData } = hiddenImageData;
   if (hW > carrierW || hH > carrierH) throw new Error(`Hidden image (${hW}×${hH}) exceeds carrier (${carrierW}×${carrierH})`);
 
   const mask = (1 << bpc) - 1;
-  const shift = 8 - bpc; // take top bpc bits of hidden channel value
+  const shift = 8 - bpc;
 
-  // Write header into first 7 carrier pixels, Red channel only, full byte overwrite.
-  // Uses distinct magic 0x5D (']') 0xD5 to avoid collision with LSB text stream magic 0xDE/0xAD.
-  carrierData[0 * 4 + 0] = 0x5D; // magic byte 1
-  carrierData[1 * 4 + 0] = 0xD5; // magic byte 2
+  // Build channel bitmask for header
+  const chMask = channels.reduce((m, ch) => m | (1 << ch), 0);
+
+  // Write 8-pixel header into Red channel, full byte overwrite
+  const HEADER_PX = 8;
+  carrierData[0 * 4 + 0] = 0x5D;
+  carrierData[1 * 4 + 0] = 0xD5;
   carrierData[2 * 4 + 0] = (hW >> 8) & 0xff;
   carrierData[3 * 4 + 0] = hW & 0xff;
   carrierData[4 * 4 + 0] = (hH >> 8) & 0xff;
   carrierData[5 * 4 + 0] = hH & 0xff;
   carrierData[6 * 4 + 0] = bpc;
+  carrierData[7 * 4 + 0] = chMask;
 
-  // Encode hidden pixels spatially — skip first 7 carrier pixels (header)
-  const HEADER_PX = 7;
+  // Compute luminance for single/partial channel encoding
+  // When < 3 color channels selected, encode luminance into each selected channel
+  const isFullColor = channels.includes(0) && channels.includes(1) && channels.includes(2);
+
   for (let y = 0; y < hH; y++) {
     for (let x = 0; x < hW; x++) {
-      // Map hidden (x,y) → carrier pixel, offset by header
       const hIdx = (y * hW + x) * 4;
       const cPx  = HEADER_PX + y * carrierW + x;
       const cIdx = cPx * 4;
       if (cIdx + 3 >= carrierData.length) continue;
 
-      // Encode R, G, B channels (skip A — keep carrier alpha intact)
-      for (let ch = 0; ch < 3; ch++) {
-        const topBits = (hData[hIdx + ch] >> shift) & mask;
+      for (const ch of channels) {
+        let srcVal;
+        if (isFullColor) {
+          // Map hidden channel directly to same carrier channel
+          srcVal = hData[hIdx + Math.min(ch, 2)]; // clamp A→B for safety
+        } else {
+          // Single/partial: encode luminance into each selected channel
+          const luma = Math.round(0.299 * hData[hIdx] + 0.587 * hData[hIdx + 1] + 0.114 * hData[hIdx + 2]);
+          srcVal = luma;
+        }
+        const topBits = (srcVal >> shift) & mask;
         carrierData[cIdx + ch] = (carrierData[cIdx + ch] & ~mask) | topBits;
       }
     }
@@ -92,22 +109,24 @@ export function encodeSpatial(carrierData, carrierW, carrierH, hiddenImageData, 
 
 /**
  * SPATIAL image-in-image decode.
- * Returns {imageData, width, height, bpc} or null if no spatial header found.
+ * Returns {imageData, width, height, bpc, channels} or null if no spatial header found.
  */
 export function decodeSpatial(carrierData, carrierW, carrierH) {
-  // Check magic (0x5D, 0xD5 — distinct from LSB text stream magic 0xDE/0xAD)
   if (carrierData[0] !== 0x5D || carrierData[4] !== 0xD5) return null;
 
-  const hW  = (carrierData[8]  << 8) | carrierData[12];
-  const hH  = (carrierData[16] << 8) | carrierData[20];
-  const bpc = carrierData[24];
+  const hW    = (carrierData[8]  << 8) | carrierData[12];
+  const hH    = (carrierData[16] << 8) | carrierData[20];
+  const bpc   = carrierData[24];
+  const chMask = carrierData[28] || 0b0111; // default RGB for old files
 
   if (hW <= 0 || hH <= 0 || hW > carrierW || hH > carrierH) return null;
   if (bpc < 1 || bpc > 4) return null;
 
+  const channels = [0, 1, 2, 3].filter(b => chMask & (1 << b));
+  const isFullColor = channels.includes(0) && channels.includes(1) && channels.includes(2);
   const mask  = (1 << bpc) - 1;
-  const scale = Math.round(255 / mask); // amplify back to 0–255
-  const HEADER_PX = 7;
+  const scale = Math.round(255 / mask);
+  const HEADER_PX = 8;
 
   const hData = new Uint8ClampedArray(hW * hH * 4);
 
@@ -118,14 +137,28 @@ export function decodeSpatial(carrierData, carrierW, carrierH) {
       const cIdx = cPx * 4;
       if (cIdx + 3 >= carrierData.length) continue;
 
-      for (let ch = 0; ch < 3; ch++) {
-        hData[hIdx + ch] = Math.min(255, (carrierData[cIdx + ch] & mask) * scale);
+      if (isFullColor) {
+        // Reconstruct each color channel from its corresponding carrier channel
+        for (const ch of channels) {
+          if (ch < 3) hData[hIdx + ch] = Math.min(255, (carrierData[cIdx + ch] & mask) * scale);
+        }
+        // Fill any missing color channels with 0 (partial color = tinted result)
+        for (let ch = 0; ch < 3; ch++) {
+          if (!channels.includes(ch)) hData[hIdx + ch] = 0;
+        }
+      } else {
+        // Grayscale: read luminance from first selected channel, apply to R+G+B
+        const srcCh = channels[0];
+        const luma = Math.min(255, (carrierData[cIdx + srcCh] & mask) * scale);
+        hData[hIdx + 0] = luma;
+        hData[hIdx + 1] = luma;
+        hData[hIdx + 2] = luma;
       }
-      hData[hIdx + 3] = 255; // fully opaque
+      hData[hIdx + 3] = 255;
     }
   }
 
-  return { imageData: new ImageData(hData, hW, hH), width: hW, height: hH, bpc };
+  return { imageData: new ImageData(hData, hW, hH), width: hW, height: hH, bpc, channels };
 }
 
 /**
