@@ -2,7 +2,7 @@
  * dead-drop — main application
  */
 
-import { encode, decode, capacity, autoDetect } from './steganography.js';
+import { encode, decode, capacity, autoDetect, imageDataToBytes, bytesToImageData } from './steganography.js';
 import { encrypt, decrypt } from './crypto.js';
 import { renderChannelView, renderLSBHeatmap, loadImageDataFromFile, loadImageData, CHANNEL_NAMES } from './visualizer.js';
 
@@ -13,16 +13,26 @@ const state = {
   viz:    { imageData: null, originalData: null },
 };
 
-// ─── Tab switching ────────────────────────────────────────────────────────────
+// ─── Tab switching (with URL hash persistence) ───────────────────────────────
+function activateTab(target) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  const btn = document.querySelector(`.tab-btn[data-tab="${target}"]`);
+  const pane = document.getElementById(`tab-${target}`);
+  if (btn) btn.classList.add('active');
+  if (pane) pane.classList.add('active');
+  history.replaceState(null, '', `#${target}`);
+}
+
 document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const target = btn.dataset.tab;
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById(`tab-${target}`).classList.add('active');
-  });
+  btn.addEventListener('click', () => activateTab(btn.dataset.tab));
 });
+
+// Restore tab from URL hash on load
+const hashTab = location.hash.replace('#', '');
+if (hashTab && document.querySelector(`.tab-btn[data-tab="${hashTab}"]`)) {
+  activateTab(hashTab);
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function getChannels(prefix) {
@@ -125,23 +135,61 @@ document.getElementById('encode-bpc')?.addEventListener('input', () => {
   updateCapacity();
 });
 
+// ─── Payload type toggle ──────────────────────────────────────────────────────
+document.querySelectorAll('input[name="encode-type"]').forEach(radio => {
+  radio.addEventListener('change', () => {
+    const isImage = document.getElementById('encode-type-image').checked;
+    document.getElementById('encode-text-fields').style.display = isImage ? 'none' : 'block';
+    document.getElementById('encode-image-fields').style.display = isImage ? 'block' : 'none';
+  });
+});
+
+// ─── Hidden image dropzone ────────────────────────────────────────────────────
+setupDropzone('encode-hidden-drop', 'encode-hidden-file-input', ({ imageData, width, height }) => {
+  state.encode.hiddenImageData = imageData;
+
+  const preview = document.getElementById('encode-hidden-preview');
+  preview.width = width;
+  preview.height = height;
+  preview.getContext('2d').putImageData(imageData, 0, 0);
+  document.getElementById('encode-hidden-preview-wrap').style.display = 'block';
+  document.getElementById('encode-hidden-drop').classList.add('has-image');
+
+  // Show byte size needed
+  const bytesNeeded = 4 + width * height * 4; // header + RGBA pixels
+  const capEl = document.getElementById('encode-hidden-capacity');
+  if (capEl) capEl.textContent = `Hidden image: ${width}×${height} = ${bytesNeeded.toLocaleString()} bytes needed`;
+  updateCapacity();
+});
+
 document.getElementById('encode-btn')?.addEventListener('click', async () => {
   if (!state.encode.imageData) {
-    showStatus('encode-status', 'Upload an image first.', 'error');
-    return;
-  }
-  const message = document.getElementById('encode-message').value.trim();
-  if (!message) {
-    showStatus('encode-status', 'Enter a message to hide.', 'error');
+    showStatus('encode-status', 'Upload a carrier image first.', 'error');
     return;
   }
 
+  const isImageMode = document.getElementById('encode-type-image')?.checked;
   const passphrase = document.getElementById('encode-passphrase').value;
   const channels = getChannels('encode');
   const bpc = getBPC('encode');
 
-  const enc = new TextEncoder();
-  let msgBytes = enc.encode(message);
+  let msgBytes;
+
+  if (isImageMode) {
+    if (!state.encode.hiddenImageData) {
+      showStatus('encode-status', 'Upload an image to hide.', 'error');
+      return;
+    }
+    msgBytes = imageDataToBytes(state.encode.hiddenImageData);
+  } else {
+    const message = document.getElementById('encode-message').value.trim();
+    if (!message) {
+      showStatus('encode-status', 'Enter a message to hide.', 'error');
+      return;
+    }
+    const enc = new TextEncoder();
+    msgBytes = enc.encode(message);
+  }
 
   if (passphrase) {
     showStatus('encode-status', 'Encrypting…', 'info');
@@ -234,17 +282,74 @@ document.getElementById('decode-btn')?.addEventListener('click', async () => {
     }
   }
 
-  const dec = new TextDecoder();
-  let text;
-  try {
-    text = dec.decode(msgBytes);
-  } catch {
-    text = `[binary data: ${msgBytes.length} bytes]`;
-  }
+  // Try to decode as a hidden image first
+  const hiddenImg = bytesToImageData(msgBytes);
+  const resultEl = document.getElementById('decode-result');
+  const outputEl = document.getElementById('decode-output');
+  const imgOutputEl = document.getElementById('decode-image-output');
 
-  document.getElementById('decode-output').textContent = text;
-  document.getElementById('decode-result').style.display = 'block';
-  showStatus('decode-status', `✓ Decoded ${raw.length} bytes.`, 'success');
+  if (hiddenImg) {
+    // Render hidden image
+    outputEl.style.display = 'none';
+    document.getElementById('decode-copy').style.display = 'none';
+    if (!imgOutputEl) {
+      const wrap = document.createElement('div');
+      wrap.id = 'decode-image-output';
+      wrap.style.cssText = 'margin-bottom:0.75rem;text-align:center;';
+      const canvas = document.createElement('canvas');
+      canvas.width = hiddenImg.width;
+      canvas.height = hiddenImg.height;
+      canvas.getContext('2d').putImageData(hiddenImg.imageData, 0, 0);
+      canvas.style.cssText = 'max-width:100%;border-radius:6px;';
+      const lbl = document.createElement('p');
+      lbl.className = 'muted';
+      lbl.style.cssText = 'font-size:0.78rem;margin-bottom:0.4rem;';
+      lbl.textContent = `Hidden image: ${hiddenImg.width}×${hiddenImg.height}`;
+      wrap.appendChild(lbl);
+      wrap.appendChild(canvas);
+      // Download button
+      const dlBtn = document.createElement('button');
+      dlBtn.className = 'btn btn-ghost';
+      dlBtn.style.marginTop = '0.5rem';
+      dlBtn.textContent = '⬇ Save hidden image';
+      dlBtn.addEventListener('click', () => {
+        const a = document.createElement('a');
+        a.download = 'hidden-image.png';
+        a.href = canvas.toDataURL('image/png');
+        a.click();
+      });
+      wrap.appendChild(dlBtn);
+      resultEl.insertBefore(wrap, outputEl);
+    } else {
+      // Update existing canvas
+      imgOutputEl.querySelector('canvas').width = hiddenImg.width;
+      imgOutputEl.querySelector('canvas').height = hiddenImg.height;
+      imgOutputEl.querySelector('canvas').getContext('2d').putImageData(hiddenImg.imageData, 0, 0);
+      imgOutputEl.style.display = 'block';
+    }
+    resultEl.style.display = 'block';
+    showStatus('decode-status', `✓ Hidden image revealed: ${hiddenImg.width}×${hiddenImg.height} (${raw.length} bytes).`, 'success');
+  } else {
+    // Text payload
+    if (imgOutputEl) imgOutputEl.style.display = 'none';
+    outputEl.style.display = 'block';
+    document.getElementById('decode-copy').style.display = 'inline-flex';
+
+    const dec = new TextDecoder();
+    let text;
+    try {
+      text = dec.decode(msgBytes);
+      // Check if it's actually readable text
+      if (/[\x00-\x08\x0E-\x1F\x7F]/.test(text)) {
+        text = `[binary data — may be encrypted. Enter passphrase and decode again. ${msgBytes.length} bytes]`;
+      }
+    } catch {
+      text = `[binary data: ${msgBytes.length} bytes]`;
+    }
+    outputEl.textContent = text;
+    resultEl.style.display = 'block';
+    showStatus('decode-status', `✓ Decoded ${raw.length} bytes.`, 'success');
+  }
 });
 
 document.getElementById('decode-autodetect-btn')?.addEventListener('click', async () => {
@@ -377,9 +482,7 @@ document.querySelectorAll('.demo-btn').forEach(btn => {
     if (!src) return;
 
     // Switch to target tab first
-    document.querySelectorAll('.tab-btn').forEach(b => {
-      if (b.dataset.tab === tab) b.click();
-    });
+    activateTab(tab);
 
     try {
       const { imageData, width, height } = await loadImageData(src);

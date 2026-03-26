@@ -5,6 +5,35 @@
 
 const MAGIC = [0xDE, 0xAD]; // 2-byte header signature
 const VERSION = 0x01;
+const VERSION_IMAGE = 0x02; // payload type: raw image
+
+/**
+ * Serialize an ImageData into bytes for hiding.
+ * Format: [width: 2 bytes BE][height: 2 bytes BE][RGBA pixels...]
+ */
+export function imageDataToBytes(imageData) {
+  const { width, height, data } = imageData;
+  const out = new Uint8Array(4 + data.length);
+  out[0] = (width >> 8) & 0xff;
+  out[1] = width & 0xff;
+  out[2] = (height >> 8) & 0xff;
+  out[3] = height & 0xff;
+  out.set(data, 4);
+  return out;
+}
+
+/**
+ * Deserialize bytes back into a usable ImageData.
+ * Returns {imageData, width, height} or null if invalid.
+ */
+export function bytesToImageData(bytes) {
+  if (bytes.length < 4) return null;
+  const width  = (bytes[0] << 8) | bytes[1];
+  const height = (bytes[2] << 8) | bytes[3];
+  if (width <= 0 || height <= 0 || bytes.length < 4 + width * height * 4) return null;
+  const pixels = new Uint8ClampedArray(bytes.buffer, bytes.byteOffset + 4, width * height * 4);
+  return { imageData: new ImageData(new Uint8ClampedArray(pixels), width, height), width, height };
+}
 
 /**
  * Encode a message into image pixel data.

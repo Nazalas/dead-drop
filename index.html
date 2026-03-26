@@ -42,11 +42,36 @@
     </div>
 
     <div class="card">
-      <p class="section-title">2. Your secret message</p>
+      <p class="section-title">2. What to hide</p>
+
       <div class="field">
-        <textarea id="encode-message" placeholder="Type the message you want to hide…"></textarea>
+        <label>Payload type</label>
+        <div class="checkbox-group">
+          <label class="checkbox-label"><input type="radio" name="encode-type" id="encode-type-text" value="text" checked> Text message</label>
+          <label class="checkbox-label"><input type="radio" name="encode-type" id="encode-type-image" value="image"> Hidden image</label>
+        </div>
       </div>
-      <div class="field">
+
+      <div id="encode-text-fields">
+        <div class="field">
+          <textarea id="encode-message" placeholder="Type the message you want to hide…"></textarea>
+        </div>
+      </div>
+
+      <div id="encode-image-fields" style="display:none">
+        <div class="dropzone" id="encode-hidden-drop" role="button" tabindex="0" aria-label="Upload image to hide">
+          <div class="dropzone-icon">🖼</div>
+          <div class="dropzone-text">Drop the image you want to hide here</div>
+          <div class="dropzone-sub">Will be serialized as raw pixels — smaller = less capacity needed</div>
+          <input type="file" id="encode-hidden-file-input" accept="image/*">
+        </div>
+        <div class="preview-wrap" id="encode-hidden-preview-wrap">
+          <canvas id="encode-hidden-preview"></canvas>
+        </div>
+        <div id="encode-hidden-capacity" class="capacity" style="margin-top:0.5rem"></div>
+      </div>
+
+      <div class="field" style="margin-top:0.75rem">
         <label for="encode-passphrase">Passphrase (optional — encrypts with AES-256 before hiding)</label>
         <input type="password" id="encode-passphrase" placeholder="Leave blank for no encryption">
       </div>
