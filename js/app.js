@@ -3,8 +3,8 @@
  */
 
 import { encode, decode, capacity, autoDetect, imageDataToBytes, bytesToImageData, encodeSpatial, decodeSpatial } from './steganography.js';
-import { encrypt, decrypt } from './crypto.js';
 import { renderChannelView, renderLSBHeatmap, loadImageDataFromFile, loadImageData, CHANNEL_NAMES } from './visualizer.js';
+import { encrypt, decrypt } from './crypto.js';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 const state = {
@@ -451,6 +451,8 @@ document.getElementById('decode-bpc')?.addEventListener('input', () => {
 // ─── VISUALIZER TAB ───────────────────────────────────────────────────────────
 setupDropzone('viz-drop', 'viz-file-input', ({ imageData, width, height }) => {
   state.viz.imageData = imageData;
+  state.viz.width = width;
+  state.viz.height = height;
   state.viz.originalData = null; // reset diff ref
 
   const preview = document.getElementById('viz-preview');
@@ -470,6 +472,51 @@ function renderViz() {
   const bpc = parseInt(document.getElementById('viz-bpc')?.value || '1', 10);
   const grid = document.getElementById('viz-grid');
   grid.innerHTML = '';
+
+  // ── Spatial decode mode ────────────────────────────────────────────────────
+  if (mode === 'spatial') {
+    const { imageData } = state.viz;
+    const width = state.viz.width || imageData.width;
+    const height = state.viz.height || imageData.height;
+    const spatial = decodeSpatial(imageData.data, width, height);
+    const wrap = document.createElement('div');
+    wrap.className = 'viz-cell';
+    wrap.style.gridColumn = '1 / -1'; // full width
+    const label = document.createElement('div');
+    label.className = 'viz-label';
+
+    if (spatial) {
+      label.textContent = `Hidden image decoded: ${spatial.width}×${spatial.height} at ${spatial.bpc} bpp`;
+      const canvas = document.createElement('canvas');
+      canvas.width = spatial.width;
+      canvas.height = spatial.height;
+      canvas.getContext('2d').putImageData(spatial.imageData, 0, 0);
+      canvas.style.cssText = 'max-width:100%;display:block;';
+      const dlBtn = document.createElement('button');
+      dlBtn.className = 'btn btn-ghost';
+      dlBtn.style.cssText = 'margin:0.75rem 0.75rem 0.75rem;font-size:0.8rem;';
+      dlBtn.textContent = '⬇ Save hidden image';
+      dlBtn.addEventListener('click', () => {
+        const a = document.createElement('a');
+        a.download = 'hidden-image.png';
+        a.href = canvas.toDataURL('image/png');
+        a.click();
+      });
+      wrap.appendChild(label);
+      wrap.appendChild(canvas);
+      wrap.appendChild(dlBtn);
+    } else {
+      label.textContent = 'No spatial hidden image found in this image.';
+      const msg = document.createElement('p');
+      msg.className = 'muted';
+      msg.style.padding = '1rem';
+      msg.textContent = 'Load an image that was encoded with the "Hidden image" mode and this view will reveal it directly.';
+      wrap.appendChild(label);
+      wrap.appendChild(msg);
+    }
+    grid.appendChild(wrap);
+    return;
+  }
 
   const channels = mode === 'heatmap' ? [0, 1, 2] : [0, 1, 2, 3];
 
@@ -536,6 +583,8 @@ document.querySelectorAll('.demo-btn').forEach(btn => {
         showStatus('decode-status', '✓ Demo image loaded — hit Decode to reveal the message.', 'success');
       } else if (tab === 'visualize') {
         state.viz.imageData = imageData;
+        state.viz.width = width;
+        state.viz.height = height;
 
         const preview = document.getElementById('viz-preview');
         preview.width = width;
