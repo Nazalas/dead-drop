@@ -405,7 +405,10 @@ document.getElementById('decode-btn')?.addEventListener('click', async () => {
       `✓ Hidden image revealed: ${hiddenImg.width}×${hiddenImg.height} (${raw.length} bytes).`);
   } else {
     // Text payload
+    const imgOutputEl = document.getElementById('decode-image-output');
     if (imgOutputEl) imgOutputEl.style.display = 'none';
+    const outputEl = document.getElementById('decode-output');
+    const resultEl = document.getElementById('decode-result');
     outputEl.style.display = 'block';
     document.getElementById('decode-copy').style.display = 'inline-flex';
 
